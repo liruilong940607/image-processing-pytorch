@@ -79,7 +79,7 @@ def visualize(canvas_inp, keypoints_inp, group=True):
         return np.uint8(to_plots) # (N, H, W, 3)
 
 # load heatmap and paf
-def putGaussianMaps(self, entry, center, stride, grid_x, grid_y, sigma):
+def putGaussianMaps(entry, center, stride, grid_x, grid_y, sigma):
     start = stride / 2.0 - 0.5  # 0 if stride = 1, 0.5 if stride = 2, 1.5 if stride = 4, ...
     threshold = 4.6025 * sigma ** 2 * 2
     sqrt_threshold = math.sqrt(threshold)
@@ -95,11 +95,11 @@ def putGaussianMaps(self, entry, center, stride, grid_x, grid_y, sigma):
     d2 = ((x - center[0]) ** 2 + (y - center[1]) ** 2) / 2 / sigma ** 2
     idx = np.where(d2<4.6025)
     circle = entry[min_y:max_y+1,min_x:max_x+1][idx]
-    circle += np.exp(-d2[idx])
+    circle += np.exp(-d2[idx])  ## circle += np.exp(-d2[idx]) ?? 
     circle[circle > 1] = 1
     entry[min_y:max_y + 1, min_x:max_x + 1][idx] = circle
 
-def putVecMaps(self,entryX, entryY, centerA_ori, centerB_ori, grid_x, grid_y, stride, thre):
+def putVecMaps(entryX, entryY, centerA_ori, centerB_ori, grid_x, grid_y, stride, thre):
     centerA = centerA_ori * (1.0 / stride)
     centerB = centerB_ori * (1.0 / stride)
     line = centerB - centerA
@@ -110,7 +110,7 @@ def putVecMaps(self,entryX, entryY, centerA_ori, centerB_ori, grid_x, grid_y, st
     min_y = max(int(round(min(centerA[1], centerB[1]) - thre)), 0)
     max_y = min(int(round(max(centerA[1], centerB[1]) + thre)), grid_y)
 
-    norm_line = math.sqrt(line[0] * line[0] + line[1] * line[1])
+    norm_line = math.sqrt(line[0] * line[0] + line[1] * line[1]) + 1e-9
     lastX = entryX[min_y:max_y, min_x:max_x]
     lastY = entryY[min_y:max_y, min_x:max_x]
     line = 1.0 * line / norm_line
@@ -126,10 +126,7 @@ def putVecMaps(self,entryX, entryY, centerA_ori, centerB_ori, grid_x, grid_y, st
     entryY[min_y:max_y, min_x:max_x] = lastY
     
 def generate_heatmap(heatmap, kpt, stride, sigma):
-
     height, width, num_point = heatmap.shape
-    start = stride / 2.0 - 0.5
-
     num = len(kpt)
     length = len(kpt[0])
     for i in range(num):
@@ -138,16 +135,7 @@ def generate_heatmap(heatmap, kpt, stride, sigma):
                 continue
             x = kpt[i][j][0]
             y = kpt[i][j][1]
-            for h in range(height):
-                for w in range(width):
-                    xx = start + w * stride
-                    yy = start + h * stride
-                    dis = ((xx - x) * (xx - x) + (yy - y) * (yy - y)) / 2.0 / sigma / sigma
-                    if dis > 4.6052:
-                        continue
-                    heatmap[h][w][j] += math.exp(-dis)
-                    if heatmap[h][w][j] > 1:
-                        heatmap[h][w][j] = 1
+            putGaussianMaps(heatmap[:,:,j], [x,y], stride, width, height, sigma)
 
     return heatmap
 
@@ -312,7 +300,7 @@ class DatasetCocoKpt(object):
         
         return results_dict
     '''
-    
+    #@profile
     def inputProcess(self, img_id, image, keypoints_gt, scale, center, ignoremask):
         '''
         keypoints_gt: (gtN, 17, 3)
@@ -388,7 +376,7 @@ class DatasetCocoKpt(object):
                 _center = np.array([width-center[0], center[1]])
                 return _image, _ignoremask, _keypoints_gt, _center
 
-        Visualize = False 
+        Visualize = True 
         if Visualize:
             html = MYHTML('web/', 'train_visulaize')
             html.new_line()
@@ -462,6 +450,6 @@ if __name__ == '__main__':
     dataset = DatasetCocoKpt(ImageRoot='/home/dalong/data/coco2017/train2017', 
                              AnnoFile='/home/dalong/data/coco2017/annotations/person_keypoints_train2017.json', 
                              istrain=True)
-    for i in range(20):
-        data = dataset[i]
-    #data = dataset[1]
+    #for i in range(20):
+    #    data = dataset[i]
+    data = dataset[1]
