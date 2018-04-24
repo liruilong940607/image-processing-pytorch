@@ -1,3 +1,5 @@
+# Timing:(@profile) kernprof -l -v XXXX.py
+
 import random
 import numpy as np
 import os
@@ -39,7 +41,8 @@ def aug_matrix(w1, h1, w2, h2, angle_range=(-45, 45), scale_range=(0.5, 1.5), tr
                   [-beta, alpha, beta*centerx+(1-alpha)*centery],
                   [0,         0,                            1.0]])
 
-    H = H.dot(matrix_trans)[0:2, :]
+    #H = H.dot(matrix_trans)[0:2, :]
+    H = H.dot(matrix_trans)
     return H 
 
 def visualize(canvas_inp, keypoints_inp, group=True):
@@ -75,6 +78,53 @@ def visualize(canvas_inp, keypoints_inp, group=True):
             to_plots[ni] = cv2.addWeighted(canvas, 0.3, canvas_t, 0.7, 0)
         return np.uint8(to_plots) # (N, H, W, 3)
 
+# load heatmap and paf
+def putGaussianMaps(self, entry, center, stride, grid_x, grid_y, sigma):
+    start = stride / 2.0 - 0.5  # 0 if stride = 1, 0.5 if stride = 2, 1.5 if stride = 4, ...
+    threshold = 4.6025 * sigma ** 2 * 2
+    sqrt_threshold = math.sqrt(threshold)
+    #(start + g_x * stride - center[0]) ** 2 + (start + g_y * stride - center[1]) ** 2 <= threshold ** 2
+    min_y = max(0, int((center[1] - sqrt_threshold - start) / stride))
+    max_y = min(grid_y-1, int((center[1] + sqrt_threshold - start) / stride))
+    min_x = max(0, int((center[0] - sqrt_threshold - start) / stride))
+    max_x = min(grid_x-1, int((center[0] + sqrt_threshold - start) / stride))
+    g_y = np.arange(min_y,max_y+1)[:, None]
+    g_x = np.arange(min_x,max_x+1)
+    y = start + g_y * stride
+    x = start + g_x * stride
+    d2 = ((x - center[0]) ** 2 + (y - center[1]) ** 2) / 2 / sigma ** 2
+    idx = np.where(d2<4.6025)
+    circle = entry[min_y:max_y+1,min_x:max_x+1][idx]
+    circle += np.exp(-d2[idx])
+    circle[circle > 1] = 1
+    entry[min_y:max_y + 1, min_x:max_x + 1][idx] = circle
+
+def putVecMaps(self,entryX, entryY, centerA_ori, centerB_ori, grid_x, grid_y, stride, thre):
+    centerA = centerA_ori * (1.0 / stride)
+    centerB = centerB_ori * (1.0 / stride)
+    line = centerB - centerA
+
+    min_x = max(int(round(min(centerA[0], centerB[0]) - thre)), 0)
+    max_x = min(int(round(max(centerA[0], centerB[0]) + thre)), grid_x)
+
+    min_y = max(int(round(min(centerA[1], centerB[1]) - thre)), 0)
+    max_y = min(int(round(max(centerA[1], centerB[1]) + thre)), grid_y)
+
+    norm_line = math.sqrt(line[0] * line[0] + line[1] * line[1])
+    lastX = entryX[min_y:max_y, min_x:max_x]
+    lastY = entryY[min_y:max_y, min_x:max_x]
+    line = 1.0 * line / norm_line
+    g_y = np.arange(min_y, max_y)[:, None]
+    g_x = np.arange(min_x, max_x)
+    v0 = g_x - centerA[0]
+    v1 = g_y - centerA[1]
+    dist = abs(v0 * line[1] - v1 * line[0])
+    idx = dist <= thre
+    lastX[idx] = line[0]
+    lastY[idx] = line[1]
+    entryX[min_y:max_y, min_x:max_x] = lastX
+    entryY[min_y:max_y, min_x:max_x] = lastY
+    
 def generate_heatmap(heatmap, kpt, stride, sigma):
 
     height, width, num_point = heatmap.shape
@@ -186,10 +236,10 @@ class DatasetCocoKpt(object):
         self.crop_size_w = 368
         self.crop_size_h = 368
         self.scale_prob = 1
-        self.scale_min = 0.5
-        self.scale_max = 1.1
+        self.scale_min = 1.2
+        self.scale_max = 1.2
         self.target_dist = 0.6
-        self.center_perterb_max = 40
+        self.center_perterb_max = 0
 
         print ('total item in dataset is : %d'%self.__len__())
         
@@ -281,65 +331,49 @@ class DatasetCocoKpt(object):
                 else:
                     keypoints_ours[i,1,2] = 1
             return keypoints_ours
-          
-        def _augmentation_scale(image, ignoremask, keypoints_gt, center):
+        
+        def _augmentation_scale_fast(width, height, scale):
             if random.random() > self.scale_prob:
                 scale_multiplier = 1.0
             else:
                 scale_multiplier = random.random() * (self.scale_max - self.scale_min) + self.scale_min
             s = self.target_dist / scale * scale_multiplier
-            _image = cv2.resize(image, (0, 0), fx=s, fy=s, interpolation=cv2.INTER_CUBIC)
-            _ignoremask = cv2.resize(ignoremask, (0, 0), fx=s, fy=s, interpolation=cv2.INTER_CUBIC)
-            _keypoints_gt = keypoints_gt.copy() # because of normalized
-            _center = center * s
-            return _image, _ignoremask, _keypoints_gt, _center
+            Haug = np.array([[s,  0., 0.], 
+                             [-0., s, 0.],
+                             [0., 0., 1,]])
+            return Haug, width*s, height*s
+
         
         def _pointAffine(points, mat):
             points = np.array(points)
             shape = points.shape
             points = points.reshape(-1, 2)
             return np.dot( np.concatenate((points, points[:, 0:1]*0+1), axis = 1), mat.T ).reshape(shape)
-
-        def _augmentation_rotate(image, ignoremask, keypoints_gt, center):
-            height, width = image.shape[0:2]
+        
+        def _augmentation_rotate_fast(width, height):
             Haug = aug_matrix(width, height, width, height, 
-                               angle_range=(-self.max_rotate_degree, self.max_rotate_degree), 
+                               angle_range=(self.max_rotate_degree, self.max_rotate_degree), 
                                scale_range=(1.0, 1.0), 
                                trans_range=(-0.0, 0.0))
-            Rect = _pointAffine(np.array([[0,0], [width,0], [0,height], [width, height]]), Haug)
+            Rect = _pointAffine(np.array([[0,0], [width,0], [0,height], [width, height]]), Haug[0:2, :])
             widthRect = int(np.max(Rect[:,0]) - np.min(Rect[:,0]))
             heightRect = int(np.max(Rect[:,1]) - np.min(Rect[:,1]))
             Haug[0,2] += widthRect/2.0 - width/2.0
             Haug[1,2] += heightRect/2.0 - height/2.0
-            _image = cv2.warpAffine(image, Haug, (widthRect, heightRect), 
-                                    borderValue=(128,128,128), flags=cv2.INTER_CUBIC)
-            _ignoremask = cv2.warpAffine(ignoremask, Haug, (widthRect, heightRect), 
-                                         borderValue=255, flags=cv2.INTER_CUBIC)
-            _keypoints_gt = keypoints_gt.copy()
-            _keypoints_gt[:, :, 0:2] = _pointAffine(keypoints_gt[:, :, 0:2]*[width, height], Haug) / [widthRect, heightRect]
-            _keypoints_gt[keypoints_gt[:,:,2]==0] = 0
-            _center = _pointAffine(np.array(center), Haug)
-            return _image, _ignoremask, _keypoints_gt, _center
+            return Haug, widthRect, heightRect
+
         
-        def _augmentation_crop(image, ignoremask, keypoints_gt, center):
-            height, width = image.shape[0:2]
+        def _augmentation_crop_fast(width, height, center):
             x_offset = int((random.random() - 0.5) * 2 * self.center_perterb_max)
             y_offset = int((random.random() - 0.5) * 2 * self.center_perterb_max)
             c = np.array(center) + [x_offset, y_offset]
             offset_left = int(-(c[0] - (self.crop_size_w/2.0)))
             offset_up = int(-(c[1] - (self.crop_size_h/2.0)))
             Haug = np.array([[1.0,  0.0, offset_left], 
-                             [-0.0, 1.0,  offset_up]])
-            _image = cv2.warpAffine(image, Haug, (self.crop_size_w, self.crop_size_h), 
-                                    borderValue=(128,128,128), flags=cv2.INTER_CUBIC)
-            _ignoremask = cv2.warpAffine(ignoremask, Haug, (self.crop_size_w, self.crop_size_h), 
-                                         borderValue=255, flags=cv2.INTER_CUBIC)
-            _keypoints_gt = keypoints_gt.copy()
-            _keypoints_gt[:, :, 0:2] = _pointAffine(keypoints_gt[:, :, 0:2]*[width, height], Haug) / [self.crop_size_w, self.crop_size_h]
-            _keypoints_gt[keypoints_gt[:,:,2]==0] = 0
-            _center = _pointAffine(np.array(center), Haug)
-            
-            return _image, _ignoremask, _keypoints_gt, _center
+                             [-0.0, 1.0,   offset_up],
+                             [0.0,  0.0,         1.0]])
+            return Haug, self.crop_size_w, self.crop_size_h
+
         
         def _augmentation_flip(image, ignoremask, keypoints_gt, center):
             if random.random()<0.5:
@@ -353,41 +387,34 @@ class DatasetCocoKpt(object):
                 _keypoints_gt[_keypoints_gt[:,:,2]==0] = 0
                 _center = np.array([width-center[0], center[1]])
                 return _image, _ignoremask, _keypoints_gt, _center
-        
-        a = time.time()
+
         Visualize = False 
         if Visualize:
             html = MYHTML('web/', 'train_visulaize')
             html.new_line()
             html.add_image(np.uint8(image), 'origin image: %d*%d'%(image.shape[0],image.shape[1]))
-        # aug
-        image, ignoremask, keypoints_gt, center = _augmentation_scale(image, ignoremask, keypoints_gt, center)
-        if Visualize:
-            vis = visualize(image, keypoints_gt, group=True)[0]
-            cv2.circle(vis, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-            html.add_image(np.uint8(vis), 'after aug_scale: %d*%d'%(image.shape[0],image.shape[1]))
-        image, ignoremask, keypoints_gt, center = _augmentation_rotate(image, ignoremask, keypoints_gt, center)
-        if Visualize:
-            vis = visualize(image, keypoints_gt, group=True)[0]
-            cv2.circle(vis, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-            html.add_image(np.uint8(vis), 'after aug_rotate: %d*%d'%(image.shape[0],image.shape[1]))
-        image, ignoremask, keypoints_gt, center = _augmentation_crop(image, ignoremask, keypoints_gt, center)
-        if Visualize:
-            vis = visualize(image, keypoints_gt, group=True)[0]
-            cv2.circle(vis, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-            html.add_image(np.uint8(vis), 'after aug_crop: %d*%d'%(image.shape[0],image.shape[1]))
+
+        # aug fast
+        height, width = image.shape[0:2]
+        Haug1, tmpW, tmpH = _augmentation_scale_fast(width, height, scale)
+        Haug2, tmpW, tmpH = _augmentation_rotate_fast(int(tmpW), int(tmpH))
+        Haug3, tmpW, tmpH = _augmentation_crop_fast(int(tmpW), int(tmpH), 
+                                                   _pointAffine(np.array(center), Haug2.dot(Haug1)[0:2, :])) 
+        Haug_all = Haug3.dot(Haug2).dot(Haug1)[0:2, :]
+        image = cv2.warpAffine(image, Haug_all, (int(tmpW), int(tmpH)), 
+                                    borderValue=(128,128,128), flags=cv2.INTER_CUBIC)
+        ignoremask = cv2.warpAffine(ignoremask, Haug_all, (int(tmpW), int(tmpH)), 
+                                    borderValue=255, flags=cv2.INTER_CUBIC)
+        keypoints_gt[:, :, 0:2] = _pointAffine(keypoints_gt[:, :, 0:2]*[width, height], Haug_all) / [tmpW, tmpH]
+        keypoints_gt[keypoints_gt[:,:,2]==0] = 0
+        center = _pointAffine(np.array(center), Haug_all)
         image, ignoremask, keypoints_gt, center = _augmentation_flip(image, ignoremask, keypoints_gt, center)
-        if Visualize:
-            vis = visualize(image, keypoints_gt, group=True)[0]
-            cv2.circle(vis, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-            html.add_image(np.uint8(vis), 'after aug_flip: %d*%d'%(image.shape[0],image.shape[1]))
         keypoints_gt = _TransformJoints(keypoints_gt) # 17 -> ours 18
+        
         if Visualize:
             vis = visualize(image, keypoints_gt, group=True)[0]
             cv2.circle(vis, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-            html.add_image(np.uint8(vis), '17 kpt -> 18 kpt: %d*%d'%(image.shape[0],image.shape[1]))
-        print ('[AUG]', (time.time()-a) , 's')
-        a = time.time()
+            html.add_image(np.uint8(vis), 'after aug: %d*%d'%(image.shape[0],image.shape[1]))
         
         # some simple process
         input = (image - 128.0)/256.0
@@ -401,8 +428,6 @@ class DatasetCocoKpt(object):
         if Visualize:
             html.add_image(np.uint8(ignoremask[:,:,0]*255), 'ignoremask: %d*%d'%(ignoremask.shape[0],ignoremask.shape[1]))
         ignoremask = ignoremask.transpose((2,1,0))
-        print ('[simple process]', (time.time()-a) , 's')
-        a = time.time()
         
         # generate heatmap and paf
         heatmap = np.zeros((label_size_h, label_size_w, keypoints_gt.shape[1] + 1), dtype=np.float32)
@@ -414,8 +439,6 @@ class DatasetCocoKpt(object):
                 html.add_image(np.uint8(pylab.cm.hsv(cv2.resize(heatmap[:,:,i],image.shape[0:2]))[:,:,0:3]*255*0.5+image*0.5), self.ours_atrs[i])
         heatmap = heatmap.transpose((2,1,0))
         heatmap = (heatmap * ignoremask).astype(np.float32)
-        print ('[heatmap]', (time.time()-a) , 's')
-        a = time.time()
         
         paf = np.zeros((label_size_h, label_size_w, len(self.vec_pair) * 2), dtype=np.float32)
         cnt = np.zeros((label_size_h, label_size_w, len(self.vec_pair)), dtype=np.int32)
@@ -430,32 +453,7 @@ class DatasetCocoKpt(object):
             html.save()
         paf = paf.transpose((2,1,0))  
         paf = (paf * ignoremask).astype(np.float32)
-        print ('[paf]', (time.time()-a) , 's')
-        a = time.time()
         
-        '''
-        height, width = image.shape[0:2]
-        vis1 = visualize(image, keypoints_gt, group=True)[0]
-        cv2.circle(vis1, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-        image, ignoremask, keypoints_gt, center = _augmentation_scale(image, ignoremask, keypoints_gt, center)
-        vis2 = visualize(image, keypoints_gt, group=True)[0]
-        cv2.circle(vis2, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-        image, ignoremask, keypoints_gt, center = _augmentation_rotate(image, ignoremask, keypoints_gt, center)
-        vis3 = visualize(image, keypoints_gt, group=True)[0]
-        cv2.circle(vis3, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-        image, ignoremask, keypoints_gt, center = _augmentation_crop(image, ignoremask, keypoints_gt, center)
-        vis4 = visualize(image, keypoints_gt, group=True)[0]
-        cv2.circle(vis4, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-        image, ignoremask, keypoints_gt, center = _augmentation_flip(image, ignoremask, keypoints_gt, center)
-        vis5 = visualize(image, keypoints_gt, group=True)[0]
-        cv2.circle(vis5, tuple(center.astype(np.int32)), 11, [255,255,255], thickness=-1)
-        cv2.imwrite('test.jpg', np.hstack((vis1, 
-                                           cv2.resize(vis2, (int(float(vis2.shape[1])*height/vis2.shape[0]), height)),
-                                           cv2.resize(vis3, (int(float(vis3.shape[1])*height/vis3.shape[0]), height)),
-                                           cv2.resize(vis4, (int(float(vis4.shape[1])*height/vis4.shape[0]), height)),
-                                           cv2.resize(vis5, (int(float(vis5.shape[1])*height/vis5.shape[0]), height))
-                                          )))
-        '''
         
         return input, heatmap, paf, ignoremask
 
@@ -464,4 +462,6 @@ if __name__ == '__main__':
     dataset = DatasetCocoKpt(ImageRoot='/home/dalong/data/coco2017/train2017', 
                              AnnoFile='/home/dalong/data/coco2017/annotations/person_keypoints_train2017.json', 
                              istrain=True)
-    data = dataset[1]
+    for i in range(20):
+        data = dataset[i]
+    #data = dataset[1]
