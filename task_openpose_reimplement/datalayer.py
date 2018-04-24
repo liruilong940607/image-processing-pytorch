@@ -224,10 +224,10 @@ class DatasetCocoKpt(object):
         self.crop_size_w = 368
         self.crop_size_h = 368
         self.scale_prob = 1
-        self.scale_min = 1.2
-        self.scale_max = 1.2
+        self.scale_min = 0.5
+        self.scale_max = 1.1
         self.target_dist = 0.6
-        self.center_perterb_max = 0
+        self.center_perterb_max = 40
 
         print ('total item in dataset is : %d'%self.__len__())
         
@@ -340,7 +340,7 @@ class DatasetCocoKpt(object):
         
         def _augmentation_rotate_fast(width, height):
             Haug = aug_matrix(width, height, width, height, 
-                               angle_range=(self.max_rotate_degree, self.max_rotate_degree), 
+                               angle_range=(-self.max_rotate_degree, self.max_rotate_degree), 
                                scale_range=(1.0, 1.0), 
                                trans_range=(-0.0, 0.0))
             Rect = _pointAffine(np.array([[0,0], [width,0], [0,height], [width, height]]), Haug[0:2, :])
