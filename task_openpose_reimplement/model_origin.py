@@ -18,7 +18,7 @@ def init_with_pretrain(model, pretrained_dict):
     # 3. load the new state dict
     model.load_state_dict(model_dict)
 
-def get_model():
+def get_model(pretrained=False):
     
     cfg_vgg = {
         # 'M' means MaxPooling
@@ -164,10 +164,11 @@ def get_model():
                 pretrained_dict[model_dict_items[i][0]] = torch.from_numpy(init_dict_items[j][1][i%2].data)
         model.load_state_dict(pretrained_dict)
         torch.save(model.state_dict(), './convert/pose_iter_440000_pytorch.pkl')
-    
+
     model = ModelOrigin(backbone_net)
-    print '============= init with Openpose Official Model ================'
-    model.load_state_dict(torch.load('./convert/pose_iter_440000_pytorch.pkl'))
+    if pretrained:
+        print '============= init with Openpose Official Model ================'
+        model.load_state_dict(torch.load('./convert/pose_iter_440000_pytorch.pkl'))
     return model
 
 if __name__ == '__main__':

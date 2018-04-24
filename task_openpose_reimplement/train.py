@@ -101,7 +101,7 @@ def main(args):
     # dataLoader_val = torch.utils.data.DataLoader(datasetVal, batch_size=1, shuffle=False, num_workers=1, pin_memory=False)
     
     print ('===========> loading model <===========')
-    model = get_model().cuda()
+    model = get_model(pretrained=False).cuda()
     
     optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum,
                                 weight_decay=args.weightdecay)
@@ -109,10 +109,10 @@ def main(args):
     #                             weight_decay=args.weightdecay) 
     
     iteration = 0
-    epoches = 20
+    epoches = 100
     for epoch in range(epoches):
         print ('===========>   training    <===========')
-        learning_rate = adjust_learning_rate(optimizer, iteration, args.lr, policy='step', policy_parameter={'gamma': 0.333, 'step_size': 13275}, multiple=[1., 2., 4., 8.])
+        # learning_rate = adjust_learning_rate(optimizer, iteration, args.lr, policy='step', policy_parameter={'gamma': 0.333, 'step_size': 13275}, multiple=[1., 2., 4., 8.])
         iteration = train(dataLoader_train, model, optimizer, epoch, iteration)
         
 
@@ -120,11 +120,11 @@ def main(args):
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='Training code')
-    parser.add_argument('--workers', default=4, type=int, 
+    parser.add_argument('--workers', default=6, type=int, 
                         help='number of data loading workers')
-    parser.add_argument('--batchsize', default=8, type=int, 
+    parser.add_argument('--batchsize', default=24, type=int, 
                         help='mini-batch size') # 50: 12/gpu
-    parser.add_argument('--lr', default=1e-5, type=float, 
+    parser.add_argument('--lr', default=3e-7, type=float, 
                         help='initial learning rate')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='momentum')
@@ -132,7 +132,7 @@ if __name__ == '__main__':
                         help='weight decay')
     parser.add_argument('--printfreq', default=10, type=int, 
                         help='print frequency')
-    parser.add_argument('--savefreq', default=1000, type=int, 
+    parser.add_argument('--savefreq', default=10000, type=int, 
                         help='save frequency')
     args = parser.parse_args()
     
