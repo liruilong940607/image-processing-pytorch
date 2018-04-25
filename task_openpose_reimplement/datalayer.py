@@ -412,7 +412,7 @@ class DatasetCocoKpt(object):
         
         # some simple process
         input = (image - 128.0)/256.0
-        input = input.transpose((2,1,0)).astype(np.float32)
+        input = input.transpose((2,0,1)).astype(np.float32)
         label_size_h = self.crop_size_h/self.stride
         label_size_w = self.crop_size_w/self.stride
         ignoremask = cv2.resize(ignoremask, (label_size_w, label_size_h), interpolation=cv2.INTER_CUBIC)
@@ -421,7 +421,7 @@ class DatasetCocoKpt(object):
         ignoremask = ignoremask.astype(np.float32).reshape((label_size_h, label_size_w, 1))
         if Visualize:
             html.add_image(np.uint8(ignoremask[:,:,0]*255), 'ignoremask: %d*%d'%(ignoremask.shape[0],ignoremask.shape[1]))
-        ignoremask = ignoremask.transpose((2,1,0))
+        ignoremask = ignoremask.transpose((2,0,1))
         
         # generate heatmap and paf
         heatmap = np.zeros((label_size_h, label_size_w, keypoints_gt.shape[1] + 1), dtype=np.float32)
@@ -431,7 +431,7 @@ class DatasetCocoKpt(object):
             html.new_line()
             for i in range(heatmap.shape[2]):
                 html.add_image(np.uint8(pylab.cm.hsv(cv2.resize(heatmap[:,:,i],image.shape[0:2]))[:,:,0:3]*255*0.5+image*0.5), self.ours_atrs[i])
-        heatmap = heatmap.transpose((2,1,0))
+        heatmap = heatmap.transpose((2,0,1))
         heatmap = (heatmap * ignoremask).astype(np.float32)
         
         paf = np.zeros((label_size_h, label_size_w, len(self.vec_pair) * 2), dtype=np.float32)
@@ -444,7 +444,7 @@ class DatasetCocoKpt(object):
                               )
         
             html.save()
-        paf = paf.transpose((2,1,0))  
+        paf = paf.transpose((2,0,1))  
         paf = (paf * ignoremask).astype(np.float32)
         
         

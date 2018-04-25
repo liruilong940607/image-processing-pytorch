@@ -127,8 +127,9 @@ def main(args):
                                  istrain=True)
     dataLoader_train = torch.utils.data.DataLoader(datasetTrain, batch_size=args.batchsize, shuffle=True, num_workers=args.workers, pin_memory=False)
     print ('===========> loading model <===========')
-    model = get_model(pretrained=False).cuda()
-    optimizer = torch.optim.SGD(set_lr_groups(model, args.lr), args.lr, momentum=args.momentum,
+    model = get_model(pretrained=False)
+    model = torch.nn.DataParallel(model).cuda()
+    optimizer = torch.optim.SGD(set_lr_groups(model.module, args.lr), args.lr, momentum=args.momentum,
                                 weight_decay=args.weightdecay)
     iteration = 0
     epoch = 0
@@ -143,7 +144,7 @@ if __name__ == '__main__':
                         help='number of data loading workers')
     #################################################################
     ## https://github.com/ZheC/Realtime_Multi-Person_Pose_Estimation/blob/master/training/example_proto/pose_solver.prototxt
-    parser.add_argument('--batchsize', default=8, type=int, 
+    parser.add_argument('--batchsize', default=48, type=int, 
                         help='mini-batch size') # 50: 12/gpu
     parser.add_argument('--lr', default=2e-6, type=float, 
                         help='initial learning rate')
@@ -151,13 +152,13 @@ if __name__ == '__main__':
                         help='learning rate policy')
     parser.add_argument('--gamma', default=0.333, type=float, 
                         help='used by step learning rate policy')
-    parser.add_argument('--stepsize', default=136106, type=int, 
+    parser.add_argument('--stepsize', default=15000, type=int, 
                         help='used by step learning rate policy')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='momentum')
     parser.add_argument('--weightdecay', default=5e-4, type=float, 
                         help='weight decay')
-    parser.add_argument('--max_iter', default=600000, type=int, 
+    parser.add_argument('--max_iter', default=60000, type=int, 
                         help='weight decay')
     ##################################################################
     parser.add_argument('--printfreq', default=10, type=int, 
