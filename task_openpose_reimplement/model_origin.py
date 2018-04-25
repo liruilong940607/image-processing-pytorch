@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 
 import model_backbone_resnet
 import model_backbone_vgg
@@ -18,6 +19,45 @@ def init_with_pretrain(model, pretrained_dict):
     # 3. load the new state dict
     model.load_state_dict(model_dict)
 
+# See https://github.com/ZheC/Realtime_Multi-Person_Pose_Estimation/blob/master/training/example_proto/pose_train_test.prototxt
+def set_lr_groups(model, base_lr):
+    # x1.0 conv with bias{
+    #     param { lr_mult: 1.0 decay_mult: 1 }
+    #     param { lr_mult: 2.0 decay_mult: 0 }
+    # }
+    # x4.0 conv with bias{
+    #     param { lr_mult: 4.0 decay_mult: 1 }
+    #     param { lr_mult: 8.0 decay_mult: 0 }
+    # }
+
+    x1_conv = []
+    x1_bias = []
+    x4_conv = []
+    x4_bias = []
+    for name, param in model.named_parameters():
+        if name.split('.')[0] in ['stage2','stage3','stage4','stage5','stage6']:
+            if name.split('.')[-1] == 'weight':
+                x4_conv.append(param)
+            elif name.split('.')[-1] == 'bias':
+                x4_bias.append(param)
+            else:
+                print ('Error in <set_lr_groups>! You want to assign layer %s to which lr_group?'%name)
+        else:
+            if name.split('.')[-1] == 'weight':
+                x1_conv.append(param)
+            elif name.split('.')[-1] == 'bias':
+                x1_bias.append(param)
+            else:
+                print ('Error in <set_lr_groups>! You want to assign layer %s to which lr_group?'%name)
+
+    params = [{'params': x1_conv, 'lr': base_lr * 1.},
+              {'params': x1_bias, 'lr': base_lr * 2., 'weight_decay': 0.},
+              {'params': x4_conv, 'lr': base_lr * 4.},
+              {'params': x4_bias, 'lr': base_lr * 8., 'weight_decay': 0.}]
+    return params
+    
+
+    
 def get_model(pretrained=False):
     
     cfg_vgg = {
@@ -90,7 +130,16 @@ def get_model(pretrained=False):
             
             if not is_final:
                 self.outplanes = feature_channels + 38 + 19
-
+            
+            self._initialize_weights()
+            
+        def _initialize_weights(self):
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.xavier_normal_(m.weight.data)
+                    if m.bias is not None:
+                        m.bias.data.zero_()
+                
         def forward(self, x, features):
             feature_paf = self.branch_paf(x)
             out_paf = self.conv_paf(feature_paf)
@@ -103,6 +152,7 @@ def get_model(pretrained=False):
             else:
                 out = torch.cat([out_paf,out_heatmap,features],1)
                 return out, [out_paf, out_heatmap]
+            
       
     class ModelOrigin(nn.Module):
         def __init__(self, backbone_net):
@@ -169,6 +219,9 @@ def get_model(pretrained=False):
     if pretrained:
         print '============= init with Openpose Official Model ================'
         model.load_state_dict(torch.load('./convert/pose_iter_440000_pytorch.pkl'))
+        
+    
+        
     return model
 
 if __name__ == '__main__':
@@ -181,7 +234,9 @@ if __name__ == '__main__':
 
     # init model
     model = get_model().cuda()
-
+    for name, param in model.named_parameters():
+        print name, type(param), param.shape
+    
     # test simple
     # print 'forward'
     # input = Variable(torch.randn(1, 3, 368, 368)).cuda()
@@ -189,6 +244,7 @@ if __name__ == '__main__':
     # print outputs[0].data.cpu().size(), outputs[1].data.cpu().size()
 
     
+    '''
     # test img
     print 'forward'
     img = cv2.imread('./sample_image/upper.jpg')
@@ -212,4 +268,5 @@ if __name__ == '__main__':
     heatmap = np.max(abs(out_heatmap[0]), axis = 0)
     cv2.imwrite('./sample_image/paf.jpg', np.uint8(paf*255))  
     cv2.imwrite('./sample_image/heatmap.jpg', np.uint8(heatmap*255))  
+    '''
 

@@ -15,11 +15,11 @@ import json
 import random
 
 from datalayer import DatasetCocoKpt
-from model_origin import get_model
+from model_origin import get_model, set_lr_groups
 from utils import to_varabile, AverageMeter, adjust_learning_rate, save_checkpoint
 from logger import Logger
 
-def train(dataLoader, netmodel, optimizer, epoch, iteration, logger):
+def train(dataLoader, netmodel, optimizer, epoch, iteration, logger, args):
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
     lossesList_paf = [AverageMeter('PAF_S%d'%i) for i in range(1,7)]
@@ -27,11 +27,16 @@ def train(dataLoader, netmodel, optimizer, epoch, iteration, logger):
         
     # switch to train mode
     netmodel.train()
-
     lossfunc = nn.MSELoss(size_average=False).cuda()
     
     end = time.time()
     for i, data in enumerate(dataLoader):  
+        iteration += 1
+        learning_rate = adjust_learning_rate(optimizer, iteration, args.lr, 
+                                             policy=args.lr_policy, 
+                                             policy_parameter={'gamma': args.gamma, 'step_size': args.stepsize}, 
+                                             multiple=[1., 2., 4., 8.])
+        
         data_time.update(time.time() - end)
         input, heatmap_gt, paf_gt, ignoremask = data
         bz, c, h, w = input.size()
@@ -43,11 +48,13 @@ def train(dataLoader, netmodel, optimizer, epoch, iteration, logger):
         
         outs_stages = netmodel(input_var)
         loss = 0
+        heat_weight = 1.0 / 2.0 / bz # for convenient to compare with origin code
+        vec_weight = 1.0 / 2.0 / bz
         for stage, outs in enumerate(outs_stages):
             out_paf, out_heatmap = outs
-            loss_paf = lossfunc(out_paf*ignoremask_var, paf_gt_var)
-            loss_heatmap = lossfunc(out_heatmap*ignoremask_var, heatmap_gt_var)
-            loss += loss_paf + loss_heatmap
+            loss_paf = lossfunc(out_paf*ignoremask_var, paf_gt_var) * vec_weight
+            loss_heatmap = lossfunc(out_heatmap*ignoremask_var, heatmap_gt_var) * heat_weight
+            loss += (loss_paf + loss_heatmap)
             lossesList_paf[stage].update(loss_paf.data[0], bz)
             lossesList_heatmap[stage].update(loss_heatmap.data[0], bz)
         
@@ -67,21 +74,21 @@ def train(dataLoader, netmodel, optimizer, epoch, iteration, logger):
                    epoch, i, len(dataLoader), optimizer.param_groups[0]['lr'], batch_time=batch_time,
                    data_time=data_time))
             print('          \t'
-                  '{loss_stage1.name:<8s}:{loss_stage1.val:>8.2f}({loss_stage1.avg:>8.2f})\t'
-                  '{loss_stage2.name:<8s}:{loss_stage2.val:>8.2f}({loss_stage2.avg:>8.2f})\t'
-                  '{loss_stage3.name:<8s}:{loss_stage3.val:>8.2f}({loss_stage3.avg:>8.2f})\t'
-                  '{loss_stage4.name:<8s}:{loss_stage4.val:>8.2f}({loss_stage4.avg:>8.2f})\t'
-                  '{loss_stage5.name:<8s}:{loss_stage5.val:>8.2f}({loss_stage5.avg:>8.2f})\t'
-                  '{loss_stage6.name:<8s}:{loss_stage6.val:>8.2f}({loss_stage6.avg:>8.2f})'.format(
+                  '{loss_stage1.name:<8s}:{loss_stage1.val:>8.4f}({loss_stage1.avg:>8.4f})\t'
+                  '{loss_stage2.name:<8s}:{loss_stage2.val:>8.4f}({loss_stage2.avg:>8.4f})\t'
+                  '{loss_stage3.name:<8s}:{loss_stage3.val:>8.4f}({loss_stage3.avg:>8.4f})\t'
+                  '{loss_stage4.name:<8s}:{loss_stage4.val:>8.4f}({loss_stage4.avg:>8.4f})\t'
+                  '{loss_stage5.name:<8s}:{loss_stage5.val:>8.4f}({loss_stage5.avg:>8.4f})\t'
+                  '{loss_stage6.name:<8s}:{loss_stage6.val:>8.4f}({loss_stage6.avg:>8.4f})'.format(
                    loss_stage1=lossesList_paf[0], loss_stage2=lossesList_paf[1], loss_stage3=lossesList_paf[2],
                    loss_stage4=lossesList_paf[3], loss_stage5=lossesList_paf[4], loss_stage6=lossesList_paf[5]))
             print('          \t'
-                  '{loss_stage1.name:<8s}:{loss_stage1.val:>8.2f}({loss_stage1.avg:>8.2f})\t'
-                  '{loss_stage2.name:<8s}:{loss_stage2.val:>8.2f}({loss_stage2.avg:>8.2f})\t'
-                  '{loss_stage3.name:<8s}:{loss_stage3.val:>8.2f}({loss_stage3.avg:>8.2f})\t'
-                  '{loss_stage4.name:<8s}:{loss_stage4.val:>8.2f}({loss_stage4.avg:>8.2f})\t'
-                  '{loss_stage5.name:<8s}:{loss_stage5.val:>8.2f}({loss_stage5.avg:>8.2f})\t'
-                  '{loss_stage6.name:<8s}:{loss_stage6.val:>8.2f}({loss_stage6.avg:>8.2f})'.format(
+                  '{loss_stage1.name:<8s}:{loss_stage1.val:>8.4f}({loss_stage1.avg:>8.4f})\t'
+                  '{loss_stage2.name:<8s}:{loss_stage2.val:>8.4f}({loss_stage2.avg:>8.4f})\t'
+                  '{loss_stage3.name:<8s}:{loss_stage3.val:>8.4f}({loss_stage3.avg:>8.4f})\t'
+                  '{loss_stage4.name:<8s}:{loss_stage4.val:>8.4f}({loss_stage4.avg:>8.4f})\t'
+                  '{loss_stage5.name:<8s}:{loss_stage5.val:>8.4f}({loss_stage5.avg:>8.4f})\t'
+                  '{loss_stage6.name:<8s}:{loss_stage6.val:>8.4f}({loss_stage6.avg:>8.4f})'.format(
                    loss_stage1=lossesList_heatmap[0], loss_stage2=lossesList_heatmap[1], loss_stage3=lossesList_heatmap[2],
                    loss_stage4=lossesList_heatmap[3], loss_stage5=lossesList_heatmap[4], loss_stage6=lossesList_heatmap[5]))
             
@@ -108,52 +115,51 @@ def train(dataLoader, netmodel, optimizer, epoch, iteration, logger):
                 logger.image_summary(tag, images, iteration)
         
         if i % args.savefreq == 0:  
-            torch.save(netmodel.state_dict(), 'snapshot/epoch%d_%d.pkl'%(epoch,i))
+            torch.save(netmodel.state_dict(), 'snapshot/lr_%d_%d.pkl'%(epoch,i))
         
-    return iteration+1+i
+    return iteration
 
 def main(args): 
     logger = Logger('./logs')
+    print ('===========> loading data <===========')
     datasetTrain = DatasetCocoKpt(ImageRoot='/home/dalong/data/coco2017/train2017', 
                                  AnnoFile='/home/dalong/data/coco2017/annotations/person_keypoints_train2017.json', 
                                  istrain=True)
-    # datasetVal = DatasetCocoKpt(ImageRoot='/home/dalong/data/coco2017/val2017', 
-    #                              AnnoFile='/home/dalong/data/coco2017/annotations/person_keypoints_val2017.json', 
-    #                              istrain=False)
-    
     dataLoader_train = torch.utils.data.DataLoader(datasetTrain, batch_size=args.batchsize, shuffle=True, num_workers=args.workers, pin_memory=False)
-    # dataLoader_val = torch.utils.data.DataLoader(datasetVal, batch_size=1, shuffle=False, num_workers=1, pin_memory=False)
-    
     print ('===========> loading model <===========')
     model = get_model(pretrained=False).cuda()
-    
-    optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum,
+    optimizer = torch.optim.SGD(set_lr_groups(model, args.lr), args.lr, momentum=args.momentum,
                                 weight_decay=args.weightdecay)
-    # optimizer = torch.optim.Adam(model.parameters(), args.lr,
-    #                             weight_decay=args.weightdecay) 
-    
     iteration = 0
-    epoches = 100
-    for epoch in range(epoches):
+    epoch = 0
+    while iteration < args.max_iter:
         print ('===========>   training    <===========')
-        # learning_rate = adjust_learning_rate(optimizer, iteration, args.lr, policy='step', policy_parameter={'gamma': 0.333, 'step_size': 13275}, multiple=[1., 2., 4., 8.])
-        iteration = train(dataLoader_train, model, optimizer, epoch, iteration, logger)
+        iteration = train(dataLoader_train, model, optimizer, epoch, iteration, logger, args)
+        epoch += 1
         
-
-
 if __name__ == '__main__':
-    
     parser = argparse.ArgumentParser(description='Training code')
     parser.add_argument('--workers', default=6, type=int, 
                         help='number of data loading workers')
-    parser.add_argument('--batchsize', default=24, type=int, 
+    #################################################################
+    ## https://github.com/ZheC/Realtime_Multi-Person_Pose_Estimation/blob/master/training/example_proto/pose_solver.prototxt
+    parser.add_argument('--batchsize', default=8, type=int, 
                         help='mini-batch size') # 50: 12/gpu
-    parser.add_argument('--lr', default=3e-17, type=float, 
+    parser.add_argument('--lr', default=2e-6, type=float, 
                         help='initial learning rate')
+    parser.add_argument('--lr_policy', default='step', type=str, 
+                        help='learning rate policy')
+    parser.add_argument('--gamma', default=0.333, type=float, 
+                        help='used by step learning rate policy')
+    parser.add_argument('--stepsize', default=136106, type=int, 
+                        help='used by step learning rate policy')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='momentum')
     parser.add_argument('--weightdecay', default=5e-4, type=float, 
                         help='weight decay')
+    parser.add_argument('--max_iter', default=600000, type=int, 
+                        help='weight decay')
+    ##################################################################
     parser.add_argument('--printfreq', default=10, type=int, 
                         help='print frequency')
     parser.add_argument('--savefreq', default=2000, type=int, 

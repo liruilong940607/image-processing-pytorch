@@ -196,8 +196,13 @@ class DatasetCocoKpt(object):
         self.imgIds = sorted(self.coco.getImgIds(catIds=self.catIds))
         self.itemIds = []
         for img_id in self.imgIds:
-            annos = self.coco.getAnnIds(imgIds=img_id)
-            for idx in range(len(annos)):
+            anno_ids = self.coco.getAnnIds(imgIds=img_id)
+            annos = self.coco.loadAnns(anno_ids)
+            for idx, anno in enumerate(annos):
+                if anno['num_keypoints'] == 0 or anno['area'] < 32*32:
+                    continue
+                if anno['bbox'][-1]==0 or anno['bbox'][-2]==0:
+                    continue
                 self.itemIds.append([img_id, idx])
                 
         self.istrain = istrain
@@ -212,9 +217,10 @@ class DatasetCocoKpt(object):
                         "left_shoulder","right_shoulder","left_elbow","right_elbow","left_wrist","right_wrist",
                         "left_hip","right_hip","left_knee","right_knee","left_ankle","right_ankle"]
         self.flipRef = np.array([1, 3,2, 5,4, 7,6, 9,8, 11,10, 13,12, 15,14, 17,16]) - 1
-        self.vec_pair = np.array([[2,3], [2,6], [3,4], [4,5], [6,7], [7,8], [2,9], [9,10], \
-                           [10,11], [2,12], [12,13], [13,14], [2,1], [1,15], [15,17], \
-                           [1,16], [16,18], [3,17], [6,18]]) - 1
+        mid_1 = [2, 9,  10, 2,  12, 13, 2, 3, 4, 3,  2, 6, 7, 6,  2, 1,  1,  15, 16]
+        mid_2 = [9, 10, 11, 12, 13, 14, 3, 4, 5, 17, 6, 7, 8, 18, 1, 15, 16, 17, 18]
+        self.vec_pair = np.array([[i,j] for i,j in zip(mid_1, mid_2)]) - 1
+        
         self.theta = 1.0
         self.sigma = 7.0
         
@@ -225,7 +231,7 @@ class DatasetCocoKpt(object):
         self.crop_size_h = 368
         self.scale_prob = 1
         self.scale_min = 0.5
-        self.scale_max = 1.1
+        self.scale_max = 0.9
         self.target_dist = 0.6
         self.center_perterb_max = 40
 
@@ -375,9 +381,9 @@ class DatasetCocoKpt(object):
                 _center = np.array([width-center[0], center[1]])
                 return _image, _ignoremask, _keypoints_gt, _center
 
-        Visualize = True 
+        Visualize = False 
         if Visualize:
-            html = MYHTML('web/', 'train_visulaize')
+            html = MYHTML('web/', 'train_visulaize_%d'%img_id)
             html.new_line()
             html.add_image(np.uint8(image), 'origin image: %d*%d'%(image.shape[0],image.shape[1]))
 
@@ -391,11 +397,12 @@ class DatasetCocoKpt(object):
         image = cv2.warpAffine(image, Haug_all, (int(tmpW), int(tmpH)), 
                                     borderValue=(128,128,128), flags=cv2.INTER_CUBIC)
         ignoremask = cv2.warpAffine(ignoremask, Haug_all, (int(tmpW), int(tmpH)), 
-                                    borderValue=255, flags=cv2.INTER_CUBIC)
-        keypoints_gt[:, :, 0:2] = _pointAffine(keypoints_gt[:, :, 0:2]*[width, height], Haug_all) / [tmpW, tmpH]
-        keypoints_gt[keypoints_gt[:,:,2]==0] = 0
+                                    borderValue=1, flags=cv2.INTER_CUBIC)
+        _keypoints_gt = keypoints_gt.copy()
+        _keypoints_gt[:, :, 0:2] = _pointAffine(keypoints_gt[:, :, 0:2]*[width, height], Haug_all) / [tmpW, tmpH]
+        _keypoints_gt[keypoints_gt[:,:,2]==0] = 0
         center = _pointAffine(np.array(center), Haug_all)
-        image, ignoremask, keypoints_gt, center = _augmentation_flip(image, ignoremask, keypoints_gt, center)
+        image, ignoremask, keypoints_gt, center = _augmentation_flip(image, ignoremask, _keypoints_gt, center)
         keypoints_gt = _TransformJoints(keypoints_gt) # 17 -> ours 18
         
         if Visualize:
@@ -448,6 +455,6 @@ if __name__ == '__main__':
     dataset = DatasetCocoKpt(ImageRoot='/home/dalong/data/coco2017/train2017', 
                              AnnoFile='/home/dalong/data/coco2017/annotations/person_keypoints_train2017.json', 
                              istrain=True)
-    #for i in range(20):
-    #    data = dataset[i]
-    data = dataset[1]
+    for i in range(20):
+        data = dataset[i]
+    #data = dataset[1]
