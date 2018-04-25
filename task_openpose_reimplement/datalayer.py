@@ -236,11 +236,8 @@ class DatasetCocoKpt(object):
 
     def __getitem__(self, idx):
         img_id, image, keypoints_gt, scale, center = self.loadItem(idx) 
-        ignorepath = 'ignoremasks/'+self.coco.loadImgs(img_id)[0]['file_name'].replace('jpg', 'npy')
-        if os.path.exists(ignorepath):
-            ignoremask = np.load(ignorepath).astype(np.float32)
-        else:
-            ignoremask = np.zeros(image.shape[0:2], dtype = np.float32)
+        ignorepath = 'ignoremasks/'+self.coco.loadImgs(img_id)[0]['file_name'].replace('jpg', 'png')
+        ignoremask = cv2.imread(ignorepath, 0).astype(np.float32)
         input, heatmap, paf, ignoremask = self.inputProcess(img_id, image, keypoints_gt, scale, center, ignoremask)
         return input, heatmap, paf, ignoremask
     
@@ -262,6 +259,8 @@ class DatasetCocoKpt(object):
             if idx == anno_idx:
                 bbox_gt = anno['bbox'] # (x1,y1,w,h) 
                 scale = bbox_gt[3] / float(self.crop_size_h)
+                if scale <= 0: # anno bug, return next
+                    return self.loadItem(idx+1)
                 center = np.array([bbox_gt[0] + bbox_gt[2]/2.0, bbox_gt[1] + bbox_gt[3]/2.0])
         keypoints_gt = np.array(keypoints_gt) / [float(width), float(height), 1.0] # (gtN, 17, 3) normalized
         
@@ -434,8 +433,7 @@ class DatasetCocoKpt(object):
         if Visualize:
             html.new_line()
             for i in range(paf.shape[2]):
-                html.add_image(np.uint8(pylab.cm.hsv(cv2.resize(np.abs(paf[:,:,i]),image.shape[0:2]))[:,:,0:3]*255*0.5+image*0.5), 
-                               '%s-%s'%(self.ours_atrs[self.vec_pair[int(i/2)][0]], self.ours_atrs[self.vec_pair[int(i/2)][1]])
+                html.add_image(np.uint8(pylab.cm.hsv(cv2.resize(np.abs(paf[:,:,i]),image.shape[0:2]))[:,:,0:3]*255*0.5+image*0.5), '%s-%s'%(self.ours_atrs[self.vec_pair[int(i/2)][0]], self.ours_atrs[self.vec_pair[int(i/2)][1]])
                               )
         
             html.save()

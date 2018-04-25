@@ -17,8 +17,9 @@ import random
 from datalayer import DatasetCocoKpt
 from model_origin import get_model
 from utils import to_varabile, AverageMeter, adjust_learning_rate, save_checkpoint
+from logger import Logger
 
-def train(dataLoader, netmodel, optimizer, epoch, iteration):
+def train(dataLoader, netmodel, optimizer, epoch, iteration, logger):
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
     lossesList_paf = [AverageMeter('PAF_S%d'%i) for i in range(1,7)]
@@ -83,13 +84,36 @@ def train(dataLoader, netmodel, optimizer, epoch, iteration):
                   '{loss_stage6.name:<8s}:{loss_stage6.val:>8.2f}({loss_stage6.avg:>8.2f})'.format(
                    loss_stage1=lossesList_heatmap[0], loss_stage2=lossesList_heatmap[1], loss_stage3=lossesList_heatmap[2],
                    loss_stage4=lossesList_heatmap[3], loss_stage5=lossesList_heatmap[4], loss_stage6=lossesList_heatmap[5]))
-                    
+            
+        if i % (args.printfreq*10) == 0:
+            print ('===========> logger <===========')
+            # (1) Log the scalar values
+            info = {
+                'lossesList_heatmap': lossesList_heatmap[5].val,
+                'lossesList_paf': lossesList_paf[5].val
+            }
+            for tag, value in info.items():
+                logger.scalar_summary(tag, value, iteration)
+
+            # (3) Log the images
+            info = {
+                'images': input[0:2].numpy(),
+                'pafs_gt': torch.sum(torch.abs(paf_gt[0:2]), dim=1).numpy(),
+                'pafs_pred': torch.sum(torch.abs(out_paf.cpu()[0:2]), dim=1).detach().numpy(),
+                'hms_gt': torch.sum((heatmap_gt[0:2, :-1]), dim=1).numpy(),
+                'hms_pred': torch.sum((out_heatmap.cpu()[0:2, :-1]), dim=1).detach().numpy()
+            }
+            for tag, images in info.items():
+                print tag, images.shape
+                logger.image_summary(tag, images, iteration)
+        
         if i % args.savefreq == 0:  
             torch.save(netmodel.state_dict(), 'snapshot/epoch%d_%d.pkl'%(epoch,i))
         
     return iteration+1+i
 
-def main(args):    
+def main(args): 
+    logger = Logger('./logs')
     datasetTrain = DatasetCocoKpt(ImageRoot='/home/dalong/data/coco2017/train2017', 
                                  AnnoFile='/home/dalong/data/coco2017/annotations/person_keypoints_train2017.json', 
                                  istrain=True)
@@ -113,7 +137,7 @@ def main(args):
     for epoch in range(epoches):
         print ('===========>   training    <===========')
         # learning_rate = adjust_learning_rate(optimizer, iteration, args.lr, policy='step', policy_parameter={'gamma': 0.333, 'step_size': 13275}, multiple=[1., 2., 4., 8.])
-        iteration = train(dataLoader_train, model, optimizer, epoch, iteration)
+        iteration = train(dataLoader_train, model, optimizer, epoch, iteration, logger)
         
 
 
@@ -124,7 +148,7 @@ if __name__ == '__main__':
                         help='number of data loading workers')
     parser.add_argument('--batchsize', default=24, type=int, 
                         help='mini-batch size') # 50: 12/gpu
-    parser.add_argument('--lr', default=3e-7, type=float, 
+    parser.add_argument('--lr', default=3e-17, type=float, 
                         help='initial learning rate')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='momentum')
@@ -132,7 +156,7 @@ if __name__ == '__main__':
                         help='weight decay')
     parser.add_argument('--printfreq', default=10, type=int, 
                         help='print frequency')
-    parser.add_argument('--savefreq', default=10000, type=int, 
+    parser.add_argument('--savefreq', default=2000, type=int, 
                         help='save frequency')
     args = parser.parse_args()
     
