@@ -32,10 +32,16 @@ def train(dataLoader, netmodel, optimizer, epoch, iteration, logger, args):
     end = time.time()
     for i, data in enumerate(dataLoader):  
         iteration += 1
-        learning_rate = adjust_learning_rate(optimizer, iteration, args.lr, 
-                                             policy=args.lr_policy, 
-                                             policy_parameter={'gamma': args.gamma, 'step_size': args.stepsize}, 
-                                             multiple=[1., 2., 4., 8.])
+        if iteration > 5000:
+            learning_rate = adjust_learning_rate(optimizer, iteration, args.lr, 
+                                                 policy=args.lr_policy, 
+                                                 policy_parameter={'gamma': args.gamma, 'step_size': args.stepsize}, 
+                                                 multiple=[1., 2., 4., 8.])
+        else:
+            learning_rate = adjust_learning_rate(optimizer, iteration, args.lr/10., 
+                                                 policy='fixed', 
+                                                 policy_parameter={}, 
+                                                 multiple=[1., 2., 4., 8.])
         
         data_time.update(time.time() - end)
         input, heatmap_gt, paf_gt, ignoremask = data
@@ -48,8 +54,12 @@ def train(dataLoader, netmodel, optimizer, epoch, iteration, logger, args):
         
         outs_stages = netmodel(input_var)
         loss = 0
-        heat_weight = 1.0 / 2.0 / bz # for convenient to compare with origin code
-        vec_weight = 1.0 / 2.0 / bz
+        heat_weight = to_varabile(torch.FloatTensor([float(1.0 / 2.0 / bz)]), 
+                                  requires_grad=False, 
+                                  is_cuda=True) # for convenient to compare with origin code
+        vec_weight = to_varabile(torch.FloatTensor([float(1.0 / 2.0 / bz)]), 
+                                  requires_grad=False, 
+                                  is_cuda=True)
         for stage, outs in enumerate(outs_stages):
             out_paf, out_heatmap = outs
             loss_paf = lossfunc(out_paf*ignoremask_var, paf_gt_var) * vec_weight
@@ -115,12 +125,15 @@ def train(dataLoader, netmodel, optimizer, epoch, iteration, logger, args):
                 logger.image_summary(tag, images, iteration)
         
         if i % args.savefreq == 0:  
-            torch.save(netmodel.state_dict(), 'snapshot/lr_%d_%d.pkl'%(epoch,i))
+            torch.save(netmodel.state_dict(), 'snapshot/44w_%d_%d.pkl'%(epoch,i))
         
     return iteration
 
 def main(args): 
-    logger = Logger('./logs')
+    logdir = './logs/44w'
+    if not os.path.exists(logdir):
+        os.makedirs(logdir)
+    logger = Logger(logdir)
     print ('===========> loading data <===========')
     datasetTrain = DatasetCocoKpt(ImageRoot='/home/dalong/data/coco2017/train2017', 
                                  AnnoFile='/home/dalong/data/coco2017/annotations/person_keypoints_train2017.json', 
@@ -128,7 +141,9 @@ def main(args):
     dataLoader_train = torch.utils.data.DataLoader(datasetTrain, batch_size=args.batchsize, shuffle=True, num_workers=args.workers, pin_memory=False)
     print ('===========> loading model <===========')
     model = get_model(pretrained=False)
-    model = torch.nn.DataParallel(model).cuda()
+    model = torch.nn.DataParallel(model)
+    # model.load_state_dict(torch.load('snapshot/lr_1_2000.pkl'))
+    model = model.cuda()
     optimizer = torch.optim.SGD(set_lr_groups(model.module, args.lr), args.lr, momentum=args.momentum,
                                 weight_decay=args.weightdecay)
     iteration = 0
@@ -146,19 +161,19 @@ if __name__ == '__main__':
     ## https://github.com/ZheC/Realtime_Multi-Person_Pose_Estimation/blob/master/training/example_proto/pose_solver.prototxt
     parser.add_argument('--batchsize', default=48, type=int, 
                         help='mini-batch size') # 50: 12/gpu
-    parser.add_argument('--lr', default=2e-6, type=float, 
+    parser.add_argument('--lr', default=2e-5, type=float, 
                         help='initial learning rate')
     parser.add_argument('--lr_policy', default='step', type=str, 
                         help='learning rate policy')
     parser.add_argument('--gamma', default=0.333, type=float, 
                         help='used by step learning rate policy')
-    parser.add_argument('--stepsize', default=15000, type=int, 
+    parser.add_argument('--stepsize', default=20000, type=int, 
                         help='used by step learning rate policy')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='momentum')
     parser.add_argument('--weightdecay', default=5e-4, type=float, 
                         help='weight decay')
-    parser.add_argument('--max_iter', default=60000, type=int, 
+    parser.add_argument('--max_iter', default=90000, type=int, 
                         help='weight decay')
     ##################################################################
     parser.add_argument('--printfreq', default=10, type=int, 
